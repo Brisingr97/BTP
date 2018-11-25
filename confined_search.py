@@ -1,89 +1,73 @@
 
 # coding: utf-8
 
-# In[2]:
+# In[85]:
 
 
 import cv2
 import numpy as np
 import sys
-import argparse
 import os
-
-def extractImages(pathIn, pathOut):
-    try:
-            
-        vidcap = cv2.VideoCapture(pathIn,0)
-        success,image = vidcap.read()
-        count = 0
-        success = True
-        while success:
-            success,image = vidcap.read()
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    #         print ('Read a new frame: ', success)
-            gray_re = cv2.resize(gray,(640,360))
-            count += 1
-            if(count%10==0):
-                cv2.imwrite( pathOut + "\\frame%d.jpg" % (count/10), gray_re)     # save frame as JPEG file
-    except:
-        pass
-
-def issue_videos(path_names):  
-    pathnumber = 0;
-    for i in path_names:    
-        try:
-            os.mkdir("training/folder"+str(pathnumber))
-            extractImages(i,("training/folder"+str(pathnumber)))
-            pathnumber = pathnumber+1
-        except:
-            pass
-
-# issue_videos(["training/v11.mp4","training/v12.mp4","training/v21.mp4","training/v22.mp4"])
-
-
-# In[10]:
-
-
-all_folder_paths = ["training/v11","training/v12","training/v21","training/v22"]
+import math
+import time
 
 
 # In[3]:
 
 
+def reduce_frame_to_features(frame_object):
+    feature_method= cv2.xfeatures2d.SURF_create(400)
+    kp,des = feature_method.detectAndCompute(frame_object,None)
+    return (kp,des)
+
+
+# In[37]:
+
+
+def import_folder_of_images(path_folder):
+    images_as_feature_sets = []
+    for file_name in os.listdir(path_folder):
+        frame = cv2.imread(path_folder+'/'+file_name)
+        temp = reduce_frame_to_features(frame)
+        if(len(temp[0])>2):
+            images_as_feature_sets.append(temp)
+    return images_as_feature_sets
+
+
+# In[32]:
+
+
 def match_confidence(a_match_object):
-    return ((a_match_object[1].distance/a_match_object[0].distance)-1)*100
+#         print(a_match_object[0].distance,a_match_object[1].distance)
+    return 100 -100*(a_match_object[0].distance/a_match_object[1].distance)
 
 def return_matches(feature_set1,feature_set2,mode_of_operation):
     # find some heuristic to understand a good match or not
     # maybe ratio test
     # maybe distance FLANN
     FLANN_INDEX_KDTREE = 0
-    if mode_of_operation==2:
-        index_params= dict(algorithm = FLANN_INDEX_LSH,
-                   table_number = 6, # 12
-                   key_size = 12,     # 20
-                   multi_probe_level = 1) #2
-    else:
-        index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
     # search_params = dict(checks=50)   # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params,dict())
-    matches = flann.knnMatch(feature_set1[1] ,feature_set2[1],k=2)
+    if(len(feature_set1[0])>=2 and len(feature_set2[0])>=2):
+        matches = flann.knnMatch(feature_set1[1] ,feature_set2[1],k=2)
     # matchesMask = [[0,0] for i in range(len(matches))]
+    else:
+        print ("Well, EFF.")
+        print(len(feature_set1[0]),len(feature_set1[1]))
+        print("---------------")
+        print(len(feature_set2[0]),len(feature_set2[1]))
     return matches
-
-
-# In[33]:
-
-
 def match_value_between_two_images(matches_k2):
     match_conf = []
     for i in matches_k2:
         match_conf.append(match_confidence(i))
     match_conf.sort()
 #     
-    ex_val = int(len(match_conf)*0.1)
-    return_val = match_conf[:ex_val]
-    return (sum(return_val)/ex_val)
+    ex_val = int(len(match_conf)*0.9)
+    return_val = match_conf[ex_val:]
+#     print(return_val)
+    return (sum(return_val)/len(return_val))
     
 def total_match(fs1,fs2):
     return match_value_between_two_images(return_matches(fs1,fs2,0))
@@ -93,103 +77,214 @@ def total_match(fs1,fs2):
 #     pass
 
 
-# In[34]:
+# In[26]:
 
 
-def h_conf(pre_val,flag):
-    d = 1.15
-    f = 1.2
-    if flag==0:
-        return pre_val/d
-    else :
-        return pre_val*f
+def bin_search(fs):
+    limiter = 52
+    if(len(fs)==1):
+        return 0
+    last_best_match = 0
+    matching_index = 1
+    found_match = 0;
+    while(found_match==0):
+        print('\t',last_best_match,matching_index)
+#         if(matching_index>=len(fs)):
+#             matching_index = len(fs)-1
+        temp = total_match(fs[0],fs[matching_index])
+#         if(abs(last_best_match-matching_index)<=1):
+#             if(temp<75):
+#                 found_match = 1
+#                 return last_best_match
+#             if(total_match(fs[0],fs[matching_index+1])<75):
+#                 found_match = 1
+#                 last_best_match = matching_index
+#                 break
 
-
-# In[35]:
-
-
-def reduce_frame_to_features(mode_of_use,frame_object):
-    # surf,sift or orb?
-    if mode_of_use == None or mode_of_use==0:
-        feature_method= cv2.xfeatures2d.SURF_create(400)
-    elif mode_of_use==1:
-        feature_method = cv2.xfeatures2d.SIFT_create()
-    elif mode_of_use ==2:
-        feature_method = cv2.ORB()
-
-    kp,des = feature_method.detectAndCompute(frame_object,None)
-    return (kp,des)
-
-
-# In[12]:
-
-
-# feature_database.append([])
-all_feature_dataset = []
-co = 0
-for a_folder in all_folder_paths:
-    print(a_folder)
-    all_feature_dataset.append([])
-    one_folder = []
-    for subdir, dirs, files in os.walk(a_folder):
-        for file in files:
-            one_folder.append(file)
-    my_files_for_a_folder = sorted(one_folder, key=lambda x: int((x.split('_')[1]).split('.')[0]))
-    for i in my_files_for_a_folder:
-        file_name = a_folder + '/' + i
-        frame = cv2.imread(file_name)
-        all_feature_dataset[co].append(reduce_frame_to_features(0,frame))
-    co = co+1
-
-
-# In[42]:
-
-
-def find_maxima(frame,feature_set):
-    max_val = 0  
-    for i in range(0,len(feature_set)):
-        nn_bha = total_match(frame,feature_set[i])
-        if max_val<nn_bha and max_val>0.9*nn_bha:
-            continue
-        if max_val<nn_bha:
-            max_val = nn_bha
+        
+        if(temp>limiter):
+            last_best_match = matching_index
+            if(matching_index==len(fs)-1):
+                return last_best_match
+            matching_index = matching_index*2
+            if (matching_index>(len(fs)-1)):
+                matching_index = len(fs)-1
+        elif(temp==limiter):
+            last_best_match = matching_index
+            found_match = 1
+            break
         else:
+            matching_index = int((matching_index+last_best_match)/2)
+            if(abs(matching_index-last_best_match)<=1):
+                if(total_match(fs[0],fs[matching_index])<limiter):
+                    break;
+                else:
+                    return matching_index
+                    
+    return last_best_match
+
+
+# In[27]:
+
+
+def set_selection(fs):
+    my_list_of_features = []
+    new_addition = -1
+    while(new_addition!=(len(fs)-1)):
+        last_unmatched_fs = new_addition+1
+#         print(last_unmatched_fs)
+        new_addition = last_unmatched_fs+bin_search(fs[last_unmatched_fs:])
+#         print("="+str(new_addition))
+        my_list_of_features.append(new_addition)
+    return my_list_of_features
+
+
+# In[38]:
+
+
+all_folders = ["training/p11","training/p12","training/p21","training/p22","training/p31","training/p32","training/p41","training/p42"]
+
+
+# In[39]:
+
+
+unpruned_feature_set = []
+pruned_feature_set = []
+for i in all_folders:
+    print("SURFing from - " + i)
+    temp_1 = import_folder_of_images(i)
+    unpruned_feature_set.append(temp_1)
+    print("selecting min-set from fs "+i)
+    temp_2 = set_selection(temp_1)
+    temp_3 = []
+    print("Done, Pruning to new list from- "+str(len(temp_1)))
+    for k in temp_2:
+        temp_3.append(temp_1[k])
+    pruned_feature_set.append(temp_3)
+    print("pruned - "+str(len(temp_2)))
+
+
+# In[44]:
+
+
+# start hypothesis check
+
+
+# In[45]:
+
+
+test_paths = []
+test_paths.append(import_folder_of_images("training/k21"))
+test_paths.append(import_folder_of_images('training/s31'))
+
+
+# In[48]:
+
+
+temp_1 = test_paths[0]
+
+
+# In[68]:
+
+
+def match_flagger(frame_fs,test_path):
+    limiter = 65
+    for i in range(0,len(test_path)):
+        if(total_match(frame_fs,test_path[i])>=52):
             return i
+            
 
 
-# In[51]:
+# In[88]:
 
 
-# initial path confidence
-path_confidence = [0.25,0.25,0.25]
-
-#initial time hypothesis
-t_hypothesis = [0,0,0]
-t_hypothesis[0] = find_maxima(all_feature_dataset[0][0],all_feature_dataset[1])
-t_hypothesis[1] = find_maxima(all_feature_dataset[0][0],all_feature_dataset[2])
-t_hypothesis[2] = find_maxima(all_feature_dataset[0][0],all_feature_dataset[3])
-
-
-for i in range(1,len(all_feature_dataset[0])):
-    print(path_confidence)
-    print(t_hypothesis)
-    this_ob = all_feature_dataset[0][i]
-    for k in range(0,len(t_hypothesis)):
-        checker = find_maxima(this_ob,all_feature_dataset[k+1])
-        print(k+1 , checker)
-        if(checker<=t_hypothesis[k]+i+3 and checker >=t_hypothesis[k] ):
-            print(k+1,'increasing')
-            path_confidence[k] =  h_conf(path_confidence[k],1)
+start_time = time.time()
+for sarthak in range(0,len(unpruned_feature_set)):
+    print(sarthak)
+    checker = [1]
+    time_hypothesis = [0]
+    # for unpruned_feature_set[0]
+    to_check_path = unpruned_feature_set[sarthak]
+    flag = 0
+    # past_match = 0
+    for i in temp_1:
+        if(len(to_check_path)<2 or checker[-1]>=256):
+            print("----DONE----")
+            print(checker)
+            print(time_hypothesis)
+            print('\n---------')
+            break
+        if(checker[-1]<1):
+            checker.append(1)
+            current_match = match_flagger(i,to_check_path)
+            time_hypothesis.append(len(unpruned_feature_set[sarthak])-len(to_check_path))
+            continue;
+        current_match = match_flagger(i,to_check_path)
+        if(flag ==1):
+            if(current_match==None):
+                print("----DONE----")
+                print(checker)
+                print(time_hypothesis)
+                break
+            if(current_match<=2):
+                checker.append(checker[-1]*2)
+            else:
+                checker.append(checker[-1]/4)
         else:
-            print(k+1,'decreasing')
-            path_confidence[k] = h_conf(path_confidence[k],0)
-#     first image stream
-    
-    
+            time_hypothesis.append(current_match)
+        to_check_path = to_check_path[current_match:]
+#         print(current_match)
+#         print(checker)
+        flag = 1
+print(time.time()-start_time)
 
 
-# In[31]:
+# In[87]:
 
 
+start_time = time.time()
+for sarthak in range(0,len(unpruned_feature_set)):
+    print(sarthak)
+    checker = [1]
+    time_hypothesis = [0]
+    # for unpruned_feature_set[0]
+    to_check_path = pruned_feature_set[sarthak]
+    flag = 0
+    # past_match = 0
+    for i in temp_1:
+        if(len(to_check_path)<2 or checker[-1]>=256):
+            print("----DONE----")
+            print(checker)
+            print(time_hypothesis)
+            print('\n---------')
+            break
+        if(checker[-1]<1):
+            checker.append(1)
+            current_match = match_flagger(i,to_check_path)
+            time_hypothesis.append(len(pruned_feature_set[sarthak])-len(to_check_path))
+            continue;
+        current_match = match_flagger(i,to_check_path)
+        if(flag ==1):
+            if(current_match==None):
+                print("----DONE----")
+                print(checker)
+                print(time_hypothesis)
+                break
+            if(current_match<=2):
+                checker.append(checker[-1]*2)
+            else:
+                checker.append(checker[-1]/4)
+        else:
+            time_hypothesis.append(current_match)
+        to_check_path = to_check_path[current_match:]
+#         print(current_match)
+#         print(checker)
+        flag = 1
+print(time.time()-start_time)
 
+
+# In[90]:
+
+
+71/7.76
 
